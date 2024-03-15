@@ -6,6 +6,7 @@ const WebSocket = require("ws");
 let config;
 let pythonPath;
 let pythonProcess;
+let wss;
 let configPath
 let arglist;
 
@@ -16,51 +17,23 @@ exports.startModucam = function(moducamPath, confPath, videoDir) {
     arglist.push(videoDir);
 
     config = ini.parse(fs.readFileSync(confPath, 'utf-8'));
-    configPath = confPath
+    configPath = confPath;
 
     exec('which python3', (error, stdout, stderr) => {
         pythonPath = stdout.trim()
         pythonProcess = spawn(pythonPath, arglist);
         setProcessEvents();
-    })
+    });
 }
 
 exports.startWebSocketServer = function(httpServer) {
-    const wss = new WebSocket.Server({
+    wss = new WebSocket.Server({
         server: httpServer
     });
 
     wss.on("connection", function connection(ws) {
         console.log("Client conneted to websocket");
     });
-
-    const path = 'my_pipe';
-    let fifo = spawn('mkfifo', [path]);
-
-    fifo.on('exit', function(status) {
-        console.log('Created Pipe');
-
-        const fd  = fs.openSync(path, 'r+');
-        let fifoRs = fs.createReadStream(null, { fd });
-
-        image = ''
-        image = Buffer.alloc(0);
-
-        fifoRs.on('data', data => {
-            image = Buffer.concat([image, data]);
-            //process.stdout.write("new data ");
-            if (data.length % 8192 != 0) {
-                //console.log("-----END ");
-                wss.clients.forEach((client) => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(image, {binary : true});
-                    }
-                });
-                image = Buffer.alloc(0);
-            }
-        });
-    });
-
 }
 
 exports.restart = function() {
@@ -73,15 +46,34 @@ exports.restart = function() {
 }
 
 function setProcessEvents() {
+    let imgBuf = Buffer.alloc(0);
+
     pythonProcess.on('close', (code, signal) => {
-        console.log("CLOSE EVENT " + code);
-        if (code == 5) {
-            console.log("There are problems with your config file. Please fix and restart!");
-            pythonProcess = null;
-            return;
-        }
+        console.log("Moducam exited with code " + code);
         pythonProcess = spawn(pythonPath, arglist);
         setProcessEvents();
+    });
+
+    pythonProcess.stdout.on('data', (data) => {
+        imgBuf = Buffer.concat([imgBuf, data]);
+
+        // check for JPEG's EOF marker
+        if (data.length >= 2 &&
+            data[data.length - 2] === 0xFF &&
+            data[data.length - 1] === 0xD9) {
+            if (wss) {
+                wss.clients.forEach((client) => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(imgBuf, {binary : true});
+                    }
+                });
+            }
+            imgBuf = Buffer.alloc(0);
+        }
+    });
+    
+    pythonProcess.stderr.on('data', (data) => {
+        console.error(`stderr: ${data}`);
     });
 }
 
@@ -99,7 +91,6 @@ exports.updateConfigFile = function(new_configs) {
 
     fs.writeFileSync(configPath, ini.stringify(config));
     
-    //TEMPORARY FOR DEMO
     exports.restart();
 }
 
