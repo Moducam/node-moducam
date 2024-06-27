@@ -79,8 +79,9 @@ function setProcessEvents() {
 
 exports.updateConfigFile = function(new_configs) {
     for (const key in config) {
+        if (key == "Scripts") continue;
         for (const property in config[key]) {
-            if (new_configs[key].hasOwnProperty(property)) {
+            if (new_configs[key] && new_configs[key].hasOwnProperty(property)) {
                 if (property === "zone_points") {
                     new_configs[key][property] = convertPointsFromJson(new_configs[key][property]);
                 }
@@ -89,7 +90,7 @@ exports.updateConfigFile = function(new_configs) {
         }
     }
 
-    fs.writeFileSync(configPath, ini.stringify(config));
+    fs.writeFileSync(configPath, customStringify(config));
     
     exports.restart();
 }
@@ -98,6 +99,26 @@ exports.getConfig = function() {
     const converted = JSON.parse(JSON.stringify(config));
     converted["Zone"]["zone_points"] = convertPointsToJson(config["Zone"]["zone_points"])
     return converted
+}
+
+function customStringify(config) {
+    const sections = Object.keys(config);
+    let result = '';
+
+    sections.forEach(section => {
+        result += `[${section}]\n`;
+        const keys = Object.keys(config[section]);
+        keys.forEach(key => {
+            let value = config[section][key];
+            if (key === 'camera_path') {
+                value = `"${value}"`;
+            }
+            result += `${key}=${value}\n`;
+        });
+        result += `\n`
+    });
+
+    return result.trim() + `\n`;
 }
 
 function convertPointsFromJson(json) {
